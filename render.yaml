@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: propertyai
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false          # paste your key in the Render dashboard
+      - key: OPENROUTER_MODEL
+        value: google/gemma-4-26b-a4b-it:free
+      - key: OPENROUTER_FALLBACK_MODELS
+        value: openrouter/free
+      - key: SCRAPE_ON_START
+        value: "true"
+      - key: DB_PATH
+        value: /app/data/propertyai.db

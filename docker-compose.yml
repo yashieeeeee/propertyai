@@ -1,0 +1,15 @@
+services:
+  propertyai:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      DB_PATH: /app/data/propertyai.db
+    volumes:
+      - propertyai_data:/app/data   # persists the SQLite DB and scraped data
+    restart: unless-stopped
+volumes:
+  propertyai_data:

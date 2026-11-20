@@ -183,12 +183,49 @@ SYSTEM_PROMPT = """You are PropertyAI, a careful real-estate research assistant 
 
 RULES
 1. Answer ONLY from the numbered CONTEXT passages supplied in the user's message. Do not use outside knowledge about these companies or projects.
-2. Cite every factual claim with its passage number in square brackets, e.g. [1] or [2][3].
-3. Always make clear which company a fact belongs to (write "DarGlobal:" / "Wasalt:" or name the company). Never blend the two.
+2. Cite facts with the passage number in square brackets, e.g. [2]. Put citations at the end of a sentence or bullet, use at most 2 numbers per sentence (e.g. [1][3]), and never stack more than 2.
+3. Always make clear which company a fact belongs to. Never blend the two.
 4. Never invent or estimate prices, availability, payment plans, yields, specifications or dates. If a detail is not in the context, say plainly that it is not available in the collected data and suggest contacting the company or checking the linked page.
 5. If the context does not address the question at all, say so briefly instead of guessing.
-6. Be concise and well structured: short paragraphs or bullet lists. Use the conversation history only to resolve follow-up references.
-7. This is information from public web pages, not financial or legal advice."""
+6. Do not mention "the context", "the supplied context" or "the passages" in your answer. Just answer.
+
+FORMAT (strict)
+- Start directly with the answer: one short sentence, no title line.
+- NEVER use tables, HTML tags (such as <br>), code blocks or horizontal rules.
+- Use plain Markdown only: short paragraphs and bullet lists. Bold a label with **like this:**.
+- For a question about one company, give 3-6 bullets, each one line or two.
+- For a comparison, use exactly this layout:
+  **DarGlobal**
+  - bullet
+  - bullet
+  **Wasalt**
+  - bullet
+  - bullet
+  **Key difference:** one or two sentences.
+- Keep the whole answer under about 180 words unless the user asks for more detail.
+- End with at most one short line if something the user asked about is unavailable in the collected data."""
+
+
+_CITE_RUN = re.compile(r"(?:\[\d{1,2}\][ \t]*){3,}")
+_CTX_PHRASE = re.compile(r"\s*\((?:based|drawn|taken)[^)]*(?:context|passages|provided|supplied)[^)]*\)", re.I)
+
+
+def clean_answer(text: str) -> str:
+    """Normalise model output so it renders cleanly: no raw HTML, no tables-as-text, no citation pile-ups."""
+    text = text.replace("\u3010", "[").replace("\u3011", "]")  # some models use full-width brackets
+    lines = []
+    for line in text.splitlines():
+        sep = "; " if line.lstrip().startswith("|") else "\n"
+        line = re.sub(r"<br\s*/?>", sep, line, flags=re.I)
+        line = re.sub(r"</?(?:p|div|span|b|i|strong|em|ul|ol|li)\b[^>]*>", "", line, flags=re.I)
+        lines.append(line)
+    text = "\n".join(lines)
+    text = re.sub(r"(?m)^[ \t]*[\u2022\u25cf][ \t]+", "- ", text)  # real bullets -> markdown (after <br> split)
+    text = _CTX_PHRASE.sub("", text)
+    text = re.sub(r"(?i)\b(?:based only on|according to) the (?:supplied|provided) context\b[,:]?\s*", "", text)
+    text = _CITE_RUN.sub(lambda m: "".join(re.findall(r"\[\d{1,2}\]", m.group(0))[:2]) + (" " if m.group(0)[-1] in " \t" else ""), text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _clean_key() -> str | None:
@@ -282,10 +319,10 @@ def chat(req: ChatRequest, request: Request) -> dict:
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += [{"role": t.role, "content": t.content[:1500]} for t in history]
-    messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {req.message}"})
+    messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {req.message}\n\n(Reply in plain Markdown bullets, no tables or HTML, max 2 citations per sentence.)"})
 
     answer, used = call_openrouter(messages, key)
-    answer = answer.replace("【", "[").replace("】", "]")  # some models use full-width brackets
+    answer = clean_answer(answer)
     cited_idx = sorted({int(n) for n in re.findall(r"\[(\d{1,2})\]", answer) if 1 <= int(n) <= len(doc_order)})
     cited = [{**meta[doc_order[i - 1]], "n": i} for i in cited_idx]
     retrieved = [{**meta[u], "n": i + 1} for i, u in enumerate(doc_order)]

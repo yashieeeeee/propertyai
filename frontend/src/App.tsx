@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bot, Building2, Database, ExternalLink, Plus, Send, Sparkles, TriangleAlert } from 'lucide-react';
 
 type Source = { source: string; title: string; url: string; n?: number };
-type Msg = { role: 'user' | 'assistant'; content: string; sources?: Source[]; cited?: boolean; error?: boolean };
+type Msg = { role: 'user' | 'assistant'; content: string; sources?: Source[]; retrieved?: Source[]; cited?: boolean; error?: boolean };
 type Health = { documents: number; documents_by_source: Record<string, number>; model: string };
 
 const API = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -52,7 +53,7 @@ export default function App() {
         const detail = typeof d?.detail === 'string' ? d.detail : `The server returned HTTP ${r.status}.`;
         throw new Error(detail);
       }
-      setMsgs((m) => [...m, { role: 'assistant', content: d.answer, sources: d.sources, cited: d.cited }]);
+      setMsgs((m) => [...m, { role: 'assistant', content: d.answer, sources: d.sources, retrieved: d.retrieved, cited: d.cited }]);
     } catch (e) {
       const msg = e instanceof TypeError ? 'Could not reach the server. Check your connection and try again.' : (e as Error).message;
       setMsgs((m) => [...m, { role: 'assistant', content: msg, error: true }]);
@@ -182,6 +183,9 @@ export default function App() {
   );
 }
 
+// turn "[3]" markers into internal links so they render as small clickable source chips
+const linkCitations = (t: string) => t.replace(/\[(\d{1,2})\](?!\()/g, '[$1](#src-$1)');
+
 function Bubble({ m }: { m: Msg }) {
   if (m.role === 'user') {
     return (
@@ -204,7 +208,28 @@ function Bubble({ m }: { m: Msg }) {
       <div className="min-w-0 flex-1">
         <div className="font-mono text-[9px] tracking-[0.16em] text-slate-400">PROPERTYAI</div>
         <div className="prose-chat text-[15px] text-slate-700">
-          <ReactMarkdown components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}>{m.content}</ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: (p) => {
+                const cite = /^#src-(\d+)$/.exec(p.href ?? '');
+                if (cite) {
+                  const n = Number(cite[1]);
+                  const src = (m.retrieved ?? m.sources ?? []).find((x) => x.n === n);
+                  if (!src) return <sup className="cite cite-off">{n}</sup>;
+                  return (
+                    <sup>
+                      <a className="cite" href={src.url} target="_blank" rel="noreferrer" title={`${src.source}: ${src.title}`}>{n}</a>
+                    </sup>
+                  );
+                }
+                return <a href={p.href} target="_blank" rel="noreferrer">{p.children}</a>;
+              },
+              table: (p) => <div className="overflow-x-auto"><table>{p.children}</table></div>,
+            }}
+          >
+            {linkCitations(m.content)}
+          </ReactMarkdown>
         </div>
         {m.sources && m.sources.length > 0 && (
           <div className="mt-3 border-t border-slate-300 pt-3">

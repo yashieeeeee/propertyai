@@ -191,7 +191,7 @@ RULES
 
 FORMAT (strict)
 - Start directly with the answer: one short sentence, no title line.
-- NEVER use tables, HTML tags (such as <br>), code blocks or horizontal rules.
+- NEVER use HTML tags (such as <br>), code blocks or horizontal rules. Do not use tables unless the user explicitly asks for a table.
 - Use plain Markdown only: short paragraphs and bullet lists. Bold a label with **like this:**.
 - For a question about one company, give 3-6 bullets, each one line or two.
 - For a comparison, use exactly this layout:
@@ -202,6 +202,8 @@ FORMAT (strict)
   - bullet
   - bullet
   **Key difference:** one or two sentences.
+- If the user asks for a table: reply with one short intro line, then a Markdown table with a header row, a |---| separator row and one row per line, each on its own line, with a blank line before the table. Keep cells short plain text (no line breaks, no bullets, no citations inside cells); put citations like [1] in the intro line or a note after the table.
+- Do not write "from Context" or "(Context [1])" in titles.
 - Keep the whole answer under about 180 words unless the user asks for more detail.
 - End with at most one short line if something the user asked about is unavailable in the collected data."""
 
@@ -222,6 +224,8 @@ def clean_answer(text: str) -> str:
     text = "\n".join(lines)
     text = re.sub(r"(?m)^[ \t]*[\u2022\u25cf][ \t]+", "- ", text)  # real bullets -> markdown (after <br> split)
     text = _CTX_PHRASE.sub("", text)
+    text = re.sub(r"(?i)\s*\(?\bfrom (?:the )?context(?:\s*\[\d{1,2}\])?\)?", "", text)
+    text = re.sub(r"(?m)^([^|\n][^\n]*)\n(?=\|)", r"\1\n\n", text)  # GFM needs a blank line before a table
     text = re.sub(r"(?i)\b(?:based only on|according to) the (?:supplied|provided) context\b[,:]?\s*", "", text)
     text = _CITE_RUN.sub(lambda m: "".join(re.findall(r"\[\d{1,2}\]", m.group(0))[:2]) + (" " if m.group(0)[-1] in " \t" else ""), text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -317,9 +321,12 @@ def chat(req: ChatRequest, request: Request) -> dict:
     else:
         context = "(no relevant passages were found in the collected data)"
 
+    wants_table = bool(re.search(r"\b(?:table|tabular|tabulate)\b", req.message, re.I))
+    fmt_hint = ("The user asked for a table: give a short intro line, then one Markdown table, one row per line, no HTML, no <br>."
+                if wants_table else "Reply in plain Markdown bullets, no tables or HTML, max 2 citations per sentence.")
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages += [{"role": t.role, "content": t.content[:1500]} for t in history]
-    messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {req.message}\n\n(Reply in plain Markdown bullets, no tables or HTML, max 2 citations per sentence.)"})
+    messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {req.message}\n\n({fmt_hint})"})
 
     answer, used = call_openrouter(messages, key)
     answer = clean_answer(answer)
